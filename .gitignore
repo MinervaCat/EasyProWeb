@@ -1,0 +1,5 @@
+# 创建并写入常见的忽略项
+echo ".idea/" >> .gitignore
+echo "__pycache__/" >> .gitignore
+echo "*.pyc" >> .gitignore
+echo ".DS_Store" >> .gitignore
