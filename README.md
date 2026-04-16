@@ -1,5 +1,5 @@
 ## EasyProWeb 🚀
-EasyProWeb 是一款基于 LangGraph 构建的工业级软件开发智能体（Code Agent）架构。它采用分层式多智能体协同机制，旨在将复杂的自然语言需求转化为稳定、安全且可验证的工业级代码成果。
+EasyProWeb 是一款基于 LangGraph 构建的Agent软件开发网站。它采用分层式多智能体协同机制，旨在将复杂的自然语言需求转化为稳定、安全且可验证的工业级代码成果。
 ### 🌟 核心特性
 * 🧠 **分层式多智能体架构 (Hierarchical Multi-Agent)**：
 
