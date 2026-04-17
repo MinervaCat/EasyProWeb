@@ -6,6 +6,9 @@ from anyio import Path
 from langchain_core.tools import tool  # 假设你使用的是 langchain 的 tool 装饰器
 
 
+def get_coder_tool():
+    return [read_file, write_file, edit_file, execute_command]
+
 @tool
 async def read_file(path: str) -> str:
     """

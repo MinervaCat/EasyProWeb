@@ -8,6 +8,9 @@ from pathlib import Path
 import aiofiles
 from typing import Any, Dict, Optional
 
+import asyncio
+
+
 async def read_json(file_path: str) -> Dict[str, Any]:
     """
     异步读取 JSON 文件并返回字典。
@@ -47,8 +50,62 @@ async def read_file_content(file_path: str) -> str:
         return await f.read()
 
 async def write_file_content(file_path: str, content: Any):
-
-
     file_path = Path(file_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(content, encoding="utf-8")
+
+
+async def get_env_info() -> str:
+    # 异步读取 JSON
+    project_plan = await read_json("project_plan.json")
+    project_name = project_plan.get("project_name", ".")
+
+    # 异步调用 get_file_tree
+    file_tree = await get_file_tree(project_name)
+
+    return f"cwd:{project_name}\ncurrent_file_tree:{file_tree}"
+
+
+async def get_file_tree(root_dir: str, max_depth: int = 5) -> str:
+    """
+    异步扫描目录并返回类似 tree 命令的字符串表示
+    """
+    tree_lines = [root_dir]
+    ignore_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'dist', 'build'}
+    ignore_exts = {'.pyc', '.pyo', '.so', '.dll'}
+
+    async def scan(current_path, prefix="", depth=0):
+        if depth > max_depth:
+            return
+
+        try:
+            # os.listdir 是阻塞 I/O，放入线程池中执行
+            entries = await asyncio.to_thread(os.listdir, current_path)
+            entries.sort()
+        except PermissionError:
+            return
+
+        # 过滤隐藏文件
+        entries = [e for e in entries if not (e.startswith('.') and e not in ['.gitignore'])]
+
+        for i, entry in enumerate(entries):
+            full_path = os.path.join(current_path, entry)
+            is_last = (i == len(entries) - 1)
+            connector = "└── " if is_last else "├── "
+
+            # os.path.isdir 也是阻塞操作
+            is_dir = await asyncio.to_thread(os.path.isdir, full_path)
+
+            if is_dir:
+                if entry in ignore_dirs:
+                    continue
+                tree_lines.append(f"{prefix}{connector}{entry}/")
+                await scan(full_path, prefix + ("    " if is_last else "│   "), depth + 1)
+            else:
+                _, ext = os.path.splitext(entry)
+                if ext in ignore_exts:
+                    continue
+                tree_lines.append(f"{prefix}{connector}{entry}")
+
+    await scan(root_dir)
+    return "\n".join(tree_lines) if tree_lines else "(空目录)"

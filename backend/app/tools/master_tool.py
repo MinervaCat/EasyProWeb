@@ -2,6 +2,9 @@ from langchain_core.tools import tool
 from app.graph.state.state import SubTask
 from typing import List
 
+def get_master_tool():
+    return [delegate_task, finish_project, finish_milestone]
+
 @tool(args_schema=SubTask)
 def delegate_task(instruction: str, target_files: List[str], context_files: List[str], test_file_name: str, test_command: str, success_criteria: str):
     """

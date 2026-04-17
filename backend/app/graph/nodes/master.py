@@ -1,16 +1,15 @@
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from src.state import AgentState, TaskPlan, SubTask
 from typing import List
-from src.tools.file_tools import  FileTools
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from src.prompt import DECOMPOSER_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT, MASTER_AGENT_SYSTEM_PROMPT
-from src.utils.read_json import read_json
-from src.utils.utils import get_file_tree, write_json, get_env_info
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 import os
 from datetime import datetime
 import json
+from app.tools import get_master_tool
+from app.graph.state.state import AgentState, SubTask
+from app.graph.prompts import MASTER_SYSTEM_PROMPT
+from app.utils import read_json, write_json, get_env_info
 from langchain_core.messages import message_to_dict
 class MasterAgent:
     def __init__(self, model: str = "gpt-4o-mini"):
@@ -19,20 +18,15 @@ class MasterAgent:
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",  # 关键：指定阿里云兼容端点
             temperature=0.2,
         )
-        self.file_tools = FileTools()
-        # self.tools = self.file_tools.get_tools()
-        self.tools = []
-        self.tools.append(finish_project)
-        self.tools.append(delegate_task)
-        self.tools.append(finish_milestone)
-        self.llm_with_tools = self.llm.bind_tools(self.tools)
-        self.tool_map = {t.name: t for t in self.tools}
+        tools = get_master_tool()
+        self.llm_with_tools = self.llm.bind_tools(tools)
+        self.tool_map = {t.name: t for t in tools}
         self.max_steps = 5
 
-    def run(self, state: AgentState) -> AgentState:
+    async def run(self, state: AgentState) -> AgentState:
         print(f"💻 Master: 正在分配任务... ")
         prompt = ChatPromptTemplate.from_messages([
-            ("system", MASTER_AGENT_SYSTEM_PROMPT),
+            ("system", MASTER_SYSTEM_PROMPT),
             ("human", """
             # Context
             - Project Summary: {project_summary}
@@ -42,8 +36,8 @@ class MasterAgent:
             """),
             MessagesPlaceholder(variable_name="chat_history"),
         ])
-        project_plan = read_json("project_plan.json")
-        milestones = read_json("milestones.json")
+        project_plan = await read_json("project_plan.json")
+        milestones = await read_json("milestones.json")
         current_step = 0
 
         chat_history = []
@@ -59,7 +53,7 @@ class MasterAgent:
             ))
         while current_step < self.max_steps:
             current_step += 1
-            current_file_tree = get_file_tree(project_plan.get("project_name"))
+            # current_file_tree = get_file_tree(project_plan.get("project_name"))
             try:
                 # 生成代码
                 messages = prompt.format_messages(
@@ -68,7 +62,7 @@ class MasterAgent:
                     current_env_info=get_env_info(),
                     chat_history=chat_history,
                 )
-                response = self.llm_with_tools.invoke(messages)
+                response = await self.llm_with_tools.ainvoke(messages)
 
                 # 1. 准备要保存的数据
                 log_data = {
@@ -128,7 +122,7 @@ class MasterAgent:
                         print("项目结束")
                         break
                     else:
-                        tool_result = self.tool_map[tc['name']].invoke(tc["args"])
+                        tool_result = await self.tool_map[tc['name']].ainvoke(tc["args"])
                         chat_history.append(ToolMessage(
                             content=tool_result,
                             tool_call_id=tc['id'],
@@ -144,29 +138,4 @@ class MasterAgent:
 
         return state
 
-
-@tool(args_schema=SubTask)
-def delegate_task(instruction: str, target_files: List[str], context_files: List[str], test_file_name: str, test_command: str, success_criteria: str):
-    """
-    将具体的编程任务委派给具备文件操作和执行能力的 Code Agent。
-    """
-    pass
-
-@tool
-def finish_project(summary: str):
-    """
-    完成项目后调用
-    Args:
-        summary: 项目最终交付说明
-    """
-    pass
-
-@tool
-def finish_milestone(milestone_id: str):
-    """
-    完成一个milestone时调用
-    Args:
-        milestone_id: milestone的id
-    """
-    pass
 

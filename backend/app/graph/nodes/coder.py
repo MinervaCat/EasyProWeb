@@ -11,7 +11,7 @@ from src.prompt import DECOMPOSER_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT3, CODER_SYS
 from src.state import AgentState, TaskPlan
 from langchain_core.tools import tool
 import json
-import locale
+from app.tools import get_coder_tool
 from langchain_core.messages import message_to_dict
 import os
 import uuid
@@ -33,15 +33,12 @@ class CoderAgent:
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",  # 关键：指定阿里云兼容端点
             temperature=0.2,
         )
-        self.file_tools = FileTools()
-        self.tools = self.file_tools.get_tools()
-        self.tools.append(finish_task)
-        self.tools.append(execute_command)
-        self.llm_with_tools = self.llm.bind_tools(self.tools)
-        self.tool_map = {t.name: t for t in self.tools}
+        tools = get_coder_tool()
+        self.llm_with_tools = self.llm.bind_tools(tools)
+        self.tool_map = {t.name: t for t in tools}
         self.max_steps = 25
 
-    def run(self, state: AgentState) -> AgentState:
+    async def run(self, state: AgentState) -> AgentState:
 
         task = state.get("sub_task")
         print(f"💻 Coder: 正在编写代码... (任务： {task.instruction})")
@@ -79,7 +76,7 @@ class CoderAgent:
         initial_thought_and_call = AIMessage(
             content="Thought: I need to check the current directory structure to ensure I am using the correct paths for implementation and testing.",
             tool_calls=[{
-                "name": "run_test_command",
+                "name": "execute_command",
                 "args": {"command": "dir"},  # Windows 环境建议用 dir
                 "id": initial_call_id
             }]
@@ -87,14 +84,14 @@ class CoderAgent:
 
         # 3. 模拟工具返回的结果（Observation）
         initial_tool_result = ToolMessage(
-            content=execute_command.invoke("dir"),
+            content=self.tool_map['execute_command'].ainvoke("dir"),
             tool_call_id=initial_call_id,
-            tool_call_name="run_test_command",
+            tool_call_name="execute_command",
         )
         # 4. 在任务开始前初始化 scratchpad
         agent_scratchpad = [initial_thought_and_call, initial_tool_result]
-        project_plan = read_json("project_plan.json")
-        current_file_tree = get_file_tree(project_plan.get("project_name"))
+        project_plan = await read_json("project_plan.json")
+        current_file_tree = await get_file_tree(project_plan.get("project_name"))
 
         while current_step < self.max_steps:
             current_step += 1
@@ -108,10 +105,10 @@ class CoderAgent:
                 test_file_name=task.test_file_name,
                 test_command=task.test_command,
                 success_criteria=task.success_criteria,
-                working_directory=get_env_info(),
+                working_directory=await get_env_info(),
                 agent_scratchpad=manage_scratchpad(agent_scratchpad),
             )
-            response = self.llm_with_tools.invoke(messages)
+            response = await self.llm_with_tools.ainvoke(messages)
             # 1. 准备要保存的数据
             log_data = {
                 "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -137,7 +134,7 @@ class CoderAgent:
                         state['task_summary'] = summary
                         return state
                     else:
-                        tool_result = self.tool_map[tc['name']].invoke(tc["args"])
+                        tool_result = await self.tool_map[tc['name']].ainvoke(tc["args"])
                     agent_scratchpad.append(ToolMessage(
                         content=tool_result,
                         tool_call_id=tc['id'],
@@ -153,63 +150,6 @@ class CoderAgent:
 
         return state
 
-    def test(self, state: AgentState) -> AgentState:
-        result = execute_command.invoke("cd Minesweeper && node tests/minesweeper.test.js")
-        print(result)
-        return state
-
-    def fix(self, state: AgentState) -> AgentState:
-        return state
-
-    # async def acode(self, state: AgentState) -> AgentState:
-    #     """异步执行编码"""
-    #     print(f"💻 Coder: 正在编写代码... (文件 {state.current_file_index + 1}/{len(state.file_structure)})")
-    #
-    #     if state.current_file_index >= len(state.file_structure):
-    #         print("✅ Coder: 所有文件编写完成")
-    #         return state
-    #
-    #     current_file = state.file_structure[state.current_file_index]
-    #     current_task = state.task_list[state.current_file_index] if state.current_file_index < len(
-    #         state.task_list) else None
-    #
-    #     context = ""
-    #     if state.implemented_files:
-    #         context = "已实现的文件:\n"
-    #         for f in state.implemented_files:
-    #             context += f"\n{f.path}:\n{f.content[:500]}...\n"
-    #
-    #     prompt = self._get_prompt()
-    #
-    #     try:
-    #         messages = prompt.format_messages(
-    #             task_description=current_task.description if current_task else "实现功能",
-    #             file_path=current_file.path,
-    #             interface_spec=current_file.description,
-    #             context=context
-    #         )
-    #
-    #         response = await self.llm.ainvoke(messages)
-    #         code_content = self._clean_code(response)
-    #
-    #         self.file_tools.write_file(current_file.path, code_content)
-    #
-    #         state.implemented_files.append(FileSpec(
-    #             path=current_file.path,
-    #             content=code_content,
-    #             description=current_file.description
-    #         ))
-    #         state.current_file_index += 1
-    #
-    #         if current_task:
-    #             current_task.status = "completed"
-    #
-    #         print(f"✅ Coder: 完成 {current_file.path}")
-    #
-    #     except Exception as e:
-    #         print(f"❌ Coder 错误: {e}")
-    #
-    #     return state
 
     def _clean_code(self, code: str) -> str:
         """清理代码内容"""
@@ -227,118 +167,6 @@ class CoderAgent:
         return '\n'.join(cleaned).strip()
 
 
-@tool
-def finish_task(summary: str):
-    """
-    完成任务后调用
-    Args:
-        summary: 简洁的任务完成说明
-    """
-    pass
-
-
-@tool
-def execute_command(command: str):
-    """
-    Use this tool to execute tests or run code.
-    Input should be a shell command like 'node tests/logic.test.js'.
-    The tool returns the full console output.
-    If the output shows '❌ FAILED', you MUST analyze the error and fix your code.
-    """
-    # 调用上面定义的函数
-    return safe_execute_command(command)
-
-
-# def execute_command(command: str, timeout: int = 15):
-#     """
-#     执行 Shell 命令并返回结果。
-#
-#     Args:
-#         command: 要执行的完整命令字符串 (例如: 'node tests/m1.test.js')
-#         timeout: 最大执行时间（秒），防止 Agent 写出死循环代码。
-#
-#     Returns:
-#         str: 包含 stdout 或 stderr 的运行日志。
-#     """
-#     # project_plan = read_json("project_plan.json")
-#     # project_root = os.path.join(os.getcwd(), project_plan.get("project_name"))
-#     #
-#     # # 如果该目录不存在，则回退到当前目录
-#     # if not os.path.exists(project_root):
-#     #     project_root = os.getcwd()
-#
-#     try:
-#         # 在当前工作目录下执行
-#         result = subprocess.run(
-#             command,
-#             shell=True,
-#             capture_output=True,
-#             text=True,
-#             timeout=timeout,
-#             cwd=os.getcwd(),
-#             # --- 关键修改点 ---
-#             encoding='utf-8',  # 显式指定用 utf-8 解码输出
-#             errors='replace'  # 即使遇到无法解析的字符，也用 ? 替换而不是直接崩溃
-#         )
-#         print(result.stdout)
-#         print(result.stderr)
-#         # 构造反馈信息
-#         if result.returncode == 0:
-#             return f"✅ SUCCESS:\n{result.stdout}"
-#         else:
-#             return f"❌ FAILED (Exit Code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-#
-#     except subprocess.TimeoutExpired:
-#         return f"❌ ERROR: Command timed out after {timeout} seconds. Possible infinite loop in code."
-#     except Exception as e:
-#         return f"❌ SYSTEM ERROR while executing: {str(e)}"
-
-
-def safe_execute_command(command: str, timeout: int = 15):
-    # 1. 危险指令拦截
-    forbidden_words = ["rm ", "format", "sudo", "chmod", "mv /"]
-    if any(word in command.lower() for word in forbidden_words):
-        return "❌ SECURITY ERROR: This command is not allowed for safety reasons."
-
-    try:
-        # 2. 执行命令（注意：这里不使用 text=True 和 encoding）
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,  # 捕获原始字节流
-            timeout=timeout,
-            cwd=os.getcwd()
-        )
-
-        # 3. 智能解码逻辑
-        def smart_decode(data: bytes) -> str:
-            if not data:
-                return ""
-            # 尝试顺序：UTF-8 -> 系统默认编码(Windows通常是GBK) -> 容错替换
-            for enc in ['utf-8', locale.getpreferredencoding(), 'gbk']:
-                try:
-                    return data.decode(enc)
-                except UnicodeDecodeError:
-                    continue
-            return data.decode('utf-8', errors='replace')
-
-        stdout_str = smart_decode(result.stdout)
-        stderr_str = smart_decode(result.stderr)
-
-        # 4. 构造反馈
-        if result.returncode == 0:
-            # 某些命令（如 dir）成功但输出在 stdout
-            return f"✅ SUCCESS:\n{stdout_str}"
-        else:
-            # 失败时同时返回标准输出和错误输出，方便 Agent 诊断
-            return (f"❌ FAILED (Exit Code {result.returncode}):\n"
-                    f"STDOUT: {stdout_str}\n"
-                    f"STDERR: {stderr_str}")
-
-    except subprocess.TimeoutExpired:
-        return f"❌ ERROR: Command timed out after {timeout} seconds. Potential infinite loop."
-    except Exception as e:
-        return f"❌ SYSTEM ERROR while executing: {str(e)}"
 
 
 def manage_scratchpad(messages, max_content_len=300):
@@ -399,12 +227,3 @@ def manage_scratchpad(messages, max_content_len=300):
         processed_messages.append(new_msg)
 
     return processed_messages
-# @tool
-# def get_env_info():
-#     """获取当前工作目录和文件结构预览，帮助定位文件。"""
-#
-#     project_plan = read_json("project_plan.json")
-#     return {
-#         "cwd": project_plan.get("project_name"),
-#         "files": os.listdir(".")
-#     }
