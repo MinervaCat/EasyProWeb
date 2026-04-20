@@ -3,21 +3,18 @@ Coder Agent - 负责编写具体代码
 """
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
-from src.tools.file_tools import FileTools
 from langchain_openai import ChatOpenAI
-from src.utils.read_json import read_json
-from src.utils.utils import get_file_tree, write_json, get_env_info
-from src.prompt import DECOMPOSER_SYSTEM_PROMPT, CODER_SYSTEM_PROMPT3, CODER_SYSTEM_PROMPT
-from src.state import AgentState, TaskPlan
-from langchain_core.tools import tool
+from app.graph.prompts import CODER_SYSTEM_PROMPT
+from app.graph.state import AgentState
+from app.utils import get_env_info, read_json, get_file_tree
+
 import json
 from app.tools import get_coder_tool
 from langchain_core.messages import message_to_dict
 import os
 import uuid
-import subprocess
 from datetime import datetime
-
+from langchain_core.runnables import RunnableConfig
 
 class CoderAgent:
     """
@@ -38,12 +35,12 @@ class CoderAgent:
         self.tool_map = {t.name: t for t in tools}
         self.max_steps = 25
 
-    async def run(self, state: AgentState) -> AgentState:
+    async def run(self, state: AgentState, config: RunnableConfig) -> AgentState:
 
         task = state.get("sub_task")
         print(f"💻 Coder: 正在编写代码... (任务： {task.instruction})")
         prompt = ChatPromptTemplate.from_messages([
-            ("system", CODER_SYSTEM_PROMPT3),
+            ("system", CODER_SYSTEM_PROMPT),
             ("human", """
                 ### NEW TASK ASSIGNED ###
                 I have a coding task for you. Please strictly adhere to the following contract:
@@ -84,14 +81,18 @@ class CoderAgent:
 
         # 3. 模拟工具返回的结果（Observation）
         initial_tool_result = ToolMessage(
-            content=self.tool_map['execute_command'].ainvoke("dir"),
+            content=await self.tool_map['execute_command'].ainvoke("dir"),
             tool_call_id=initial_call_id,
             tool_call_name="execute_command",
         )
         # 4. 在任务开始前初始化 scratchpad
         agent_scratchpad = [initial_thought_and_call, initial_tool_result]
-        project_plan = await read_json("project_plan.json")
-        current_file_tree = await get_file_tree(project_plan.get("project_name"))
+        workspace_dir = config.get("configurable", {}).get("workspace_dir", "./workspace")
+
+        # 2. 显式拼接后传给 util
+        plan_path = f"{workspace_dir}/project_plan.json"
+        # project_plan = await read_json(plan_path)
+        # current_file_tree = await get_file_tree(project_plan.get("project_name"))
 
         while current_step < self.max_steps:
             current_step += 1
@@ -105,7 +106,7 @@ class CoderAgent:
                 test_file_name=task.test_file_name,
                 test_command=task.test_command,
                 success_criteria=task.success_criteria,
-                working_directory=await get_env_info(),
+                working_directory=await get_env_info(config),
                 agent_scratchpad=manage_scratchpad(agent_scratchpad),
             )
             response = await self.llm_with_tools.ainvoke(messages)

@@ -7,4 +7,5 @@ PLANNER_CONFIRM_REQUIREMENT = """
 3. 提问考虑项目的可行性和复杂性，涵盖技术实施的关键决策
 3. 如果信息已经非常充分（用户已回答所有关键维度），则标记 is_complete=True 并生成总结。
 
+回答生成json格式
 """

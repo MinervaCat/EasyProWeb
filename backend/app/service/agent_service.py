@@ -5,7 +5,7 @@ import asyncio
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from app.graph import AgentState, PlannerAgent, HumanNode
+from app.graph import AgentState, PlannerAgent, HumanNode, MasterAgent,  CoderAgent
 
 # 1. 定义状态 (State)
 # ==========================================
@@ -21,6 +21,8 @@ class AgentService:
         # 生产环境中可以换成 SqliteSaver 或 RedisSaver
         self.planner = PlannerAgent()
         self.human = HumanNode()
+        self.master = MasterAgent()
+        self.coder = CoderAgent()
         self.checkpointer = MemorySaver()
         self._build_graph()
 
@@ -34,34 +36,38 @@ class AgentService:
         workflow.add_node("planner", self.planner.run)
         # 添加一个专门用于“挂起/等待”的虚拟节点
         workflow.add_node("human", self.human.run)
-
+        workflow.add_node("master", self.master.run)
+        workflow.add_node("coder", self.coder.run)
 
         # 设置入口
-        workflow.set_entry_point("planner")
-
-        # 设置条件边：Planner 执行完后，该去哪？
+        # workflow.set_entry_point("planner")
+        #
+        #
+        # workflow.add_edge("planner", "human")
         # workflow.add_conditional_edges(
-        #     "planner",
+        #     "human",
         #     self._check_plan_completion,
         #     {
-        #         "continue": "human",  # 去往 human 节点等待输入
-        #         "next": END  # 讨论完毕，结束
+        #         "continue": "planner",  # 去往 human 节点等待输入
+        #         "next": "master"
         #     }
         # )
-        workflow.add_edge("planner", "human")
+
+        workflow.set_entry_point("master")
+
         workflow.add_conditional_edges(
-            "human",
-            self._check_plan_completion,
+            "master",
+            self._check_task_completion,
             {
-                "continue": "planner",  # 去往 human 节点等待输入
-                "next": "master"
+                "continue": "coder",
+                "finisher": END,
             }
         )
+        workflow.add_edge("coder", "master")
 
 
 
-        # 用户输入完毕后，流转回 Planner 继续思考
-        workflow.add_edge("human", "planner")
+
 
         # 编译图，并设置在 "human" 节点之前强制中断
         self.graph = workflow.compile(
@@ -103,6 +109,13 @@ class AgentService:
         if state["status"] == "plan_completed":
             return "next"
         return "continue"
+
+    def _check_task_completion(self, state: AgentState) -> str:
+        if "project_status" not in state:
+            return "continue"
+        if state["project_status"] != "finished":
+            return "continue"
+        return "finished"
 
     def _should_continue(self, state: KyberState) -> str:
         """路由函数：判断是继续追问，还是结束"""

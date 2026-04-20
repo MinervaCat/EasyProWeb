@@ -1,10 +1,27 @@
 import operator
 from typing import List, Optional, Annotated, TypedDict
 
-from langchain_core.messages import HumanMessage, BaseMessage
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
-from langgraph.graph.message import add_messages
-from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
+
+
+class Milestone(BaseModel):
+    id: str = Field(..., description="唯一id，如 'M1', 'M2'")
+    title: str = Field(..., description="里程碑简短名称")
+    description: str = Field(..., description="详细描述该阶段需要完成的功能和逻辑")
+    required_files: List[str] = Field(..., description="需要完成的文件")
+    # 核心修改：改为 List[str]
+    dependencies: List[str] = Field(
+        default=[],
+        description="依赖的里程碑ID列表，例如 ['M1']"
+    )
+    # 确保这个字段是必填的
+    verification_criteria: str = Field(..., description="具体的验收标准")
+
+
+class MilestoneList(BaseModel):
+    project_name: str = Field(description="项目名称，英文单词，用于创建项目文件夹")
+    milestones: List[Milestone] = Field(description="按顺序排列的里程碑任务列表")
 
 
 class ClarificationQuestion(BaseModel):

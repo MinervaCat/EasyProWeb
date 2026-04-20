@@ -7,10 +7,10 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
-from app.graph.prompts import PLANNER_CONFIRM_REQUIREMENT, PLANNER_CREATE_PLAN
+from app.graph.prompts import PLANNER_CONFIRM_REQUIREMENT, PLANNER_CREATE_PLAN, PLANNER_CREATE_PLAN_MD
 from app.graph.state.state import AgentState, AnalysisResult
 
-from app.utils.file import write_json
+from app.utils.file import write_json, read_file_async, save_file_async
 
 
 class PlannerAgent:
@@ -23,7 +23,7 @@ class PlannerAgent:
 
     def __init__(self, model: str = None):
         self.llm = ChatOpenAI(
-            model="qwen3-vl-32b-thinking",  # 这里填写通义千问的模型名
+            model="qwen-flash",  # 这里填写通义千问的模型名
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",  # 关键：指定阿里云兼容端点
             temperature=0.3,
         )
@@ -78,7 +78,7 @@ class PlannerAgent:
         """执行规划"""
         print("生成项目规划...")
         prompt = ChatPromptTemplate.from_messages([
-            ("system", PLANNER_CREATE_PLAN),
+            ("system", PLANNER_CREATE_PLAN_MD),
             ("human", "请根据用户需求制定实施计划。用户需求：{requirement}")
         ])
         chain = prompt | self.llm
@@ -95,9 +95,9 @@ class PlannerAgent:
             workspace_dir = config.get("configurable", {}).get("workspace_dir", "./workspace")
 
             # 2. 显式拼接后传给 util
-            plan_path = f"{workspace_dir}/project_plan.json"
+            plan_path = f"{workspace_dir}/project_plan.md"
             # 变化 3: 文件写入也要 await
-            await write_json(plan_path, result.content)
+            await save_file_async(plan_path, result.content)
 
             # state["milestone_index"] = 0
 

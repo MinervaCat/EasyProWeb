@@ -9,7 +9,7 @@ import aiofiles
 from typing import Any, Dict, Optional
 
 import asyncio
-
+from langchain_core.runnables import RunnableConfig
 
 async def read_json(file_path: str) -> Dict[str, Any]:
     """
@@ -40,29 +40,63 @@ async def write_json(file_path: str, data: Any, indent: int = 4) -> None:
 
     async with aiofiles.open(file_path, mode='w', encoding='utf-8') as f:
         await f.write(content)
+    print("写入成功")
 
-async def read_file_content(file_path: str) -> str:
-    """系统级底层函数：读取文件内容"""
+
+async def save_file_async(file_path: str, content: str):
+    """
+    异步保存文件。
+    如果目录不存在，会自动创建。
+    """
+    try:
+        # 确保父目录存在
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        async with aiofiles.open(file_path, mode='w', encoding='utf-8') as f:
+            await f.write(content)
+        return True
+    except Exception as e:
+        print(f"❌ 保存文件失败 {file_path}: {e}")
+        return False
+
+
+async def read_file_async(file_path: str) -> str:
+    """
+    异步读取文件内容。
+    """
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"文件不存在: {file_path}")
+        return f"❌ 错误：文件 {file_path} 不存在。"
 
-    async with aiofiles.open(file_path, mode='r', encoding='utf-8') as f:
-        return await f.read()
+    try:
+        async with aiofiles.open(file_path, mode='r', encoding='utf-8') as f:
+            content = await f.read()
+        return content
+    except Exception as e:
+        return f"❌ 读取文件异常: {str(e)}"
 
-async def write_file_content(file_path: str, content: Any):
-    file_path = Path(file_path)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(content, encoding="utf-8")
+async def path_exists_async(path: str) -> bool:
+    """
+    异步判断路径（文件或目录）是否存在。
+    使用 to_thread 防止在极慢的磁盘 I/O 上阻塞事件循环。
+    """
+    # asyncio.to_thread 是 Python 3.9+ 的标准做法
+    # 它会将同步的 os.path.exists 丢进线程池运行
+    return await asyncio.to_thread(os.path.exists, path)
 
 
-async def get_env_info() -> str:
+async def get_env_info(config: RunnableConfig) -> str:
+    workspace_dir = config.get("configurable", {}).get("workspace_dir", "./workspace")
+    milestone_path = f"{workspace_dir}/milestones.json"
     # 异步读取 JSON
-    project_plan = await read_json("project_plan.json")
-    project_name = project_plan.get("project_name", ".")
-
+    milestones = await read_json(milestone_path)
+    # project_plan = await read_json(plan_path)
+    print("hello")
+    project_name = milestones.get("project_name", ".")
+    project_path = f"{workspace_dir}/{project_name}"
+    print(project_name)
     # 异步调用 get_file_tree
-    file_tree = await get_file_tree(project_name)
-
+    file_tree = await get_file_tree(project_path)
+    print(file_tree)
     return f"cwd:{project_name}\ncurrent_file_tree:{file_tree}"
 
 
@@ -109,3 +143,17 @@ async def get_file_tree(root_dir: str, max_depth: int = 5) -> str:
 
     await scan(root_dir)
     return "\n".join(tree_lines) if tree_lines else "(空目录)"
+
+
+async def makedirs_async(path: str, exist_ok: bool = True):
+    """
+    异步创建多级目录。
+    本质是将同步的 os.makedirs 运行在独立的线程中。
+    """
+    try:
+        # asyncio.to_thread 会将函数及其参数调度到线程池执行
+        await asyncio.to_thread(os.makedirs, path, exist_ok=exist_ok)
+        return True
+    except Exception as e:
+        print(f"❌ 创建目录失败 {path}: {e}")
+        return False
