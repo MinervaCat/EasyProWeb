@@ -1,0 +1,24 @@
+# 使用轻量级的 Python 基础镜像
+FROM python:3.10-slim
+
+# 1. 关键优化：换成国内的 Debian 镜像源（这里以阿里云为例）
+# 这一步能让后续的 apt-get update 速度提升 10-100 倍
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 2. 安装基础工具
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3. 预装测试框架
+RUN pip install pytest -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+WORKDIR /workspace
+
+# 保持容器运行
+CMD ["tail", "-f", "/dev/null"]

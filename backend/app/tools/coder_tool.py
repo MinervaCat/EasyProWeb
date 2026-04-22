@@ -3,7 +3,10 @@ import subprocess
 
 import locale
 from anyio import Path
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool  # 假设你使用的是 langchain 的 tool 装饰器
+
+from app.service.sandbox import SandboxManager
 
 
 def get_coder_tool():
@@ -91,7 +94,7 @@ async def edit_file(path: str, old_string: str, new_string: str) -> str:
 
 
 @tool
-def execute_command(command: str):
+async def execute_command(command: str, config: RunnableConfig):
     """
     Use this tool to execute tests or run code.
     Input should be a shell command like 'node tests/logic.test.js'.
@@ -99,7 +102,12 @@ def execute_command(command: str):
     If the output shows '❌ FAILED', you MUST analyze the error and fix your code.
     """
     # 调用上面定义的函数
-    return safe_execute_command(command)
+    configurable = config.get("configurable", {})
+    session_id = configurable.get("thread_id", "default_session")
+
+    # 调用你之前写好的沙盒逻辑
+    result = await safe_execute_in_sandbox(session_id, command)
+    return result
 
 def safe_execute_command(command: str, timeout: int = 15):
     # 1. 危险指令拦截
@@ -155,3 +163,26 @@ def finish_task(summary: str):
         summary: 简洁的任务完成说明
     """
     pass
+
+
+
+async def safe_execute_in_sandbox(
+        session_id: str,
+        command: str,
+        timeout: int = 15
+) -> str:
+    """
+    在 Docker 沙盒容器中执行命令。
+    """
+    # 1. 增强拦截逻辑
+    # 注意：防止 Agent 尝试跳出当前工作目录
+    forbidden_words = ["rm -rf /", "chmod", "chown", ".."]
+    if any(word in command.lower() for word in forbidden_words):
+        return "❌ SECURITY ERROR: Restricted command or path detected."
+
+    # 2. 获取单例管家
+    manager = SandboxManager()
+
+    # 3. 传入必要的 timeout
+    result = await manager.run_test(session_id, command, timeout=timeout)
+    return result
